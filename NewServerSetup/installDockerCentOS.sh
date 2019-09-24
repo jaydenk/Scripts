@@ -62,7 +62,7 @@ sleep 1
 
 # Let's also install docker-compose
 printf "\n${BOLD}Let's now install Docker Compose...${NF}\n"
-VERSION=1.24.0
+VERSION=1.24.1
 sudo curl -fsSL https://github.com/docker/compose/releases/download/$VERSION/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 docker-compose --version
