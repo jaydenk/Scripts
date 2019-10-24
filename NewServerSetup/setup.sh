@@ -314,7 +314,7 @@ sleep 1
 # Install tmux, building from source. This requires the script to be kept
 # upto date when new builds are released.
 printf "\n${BOLD}Installing tmux from source, this may take a few seconds...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/development/NewMachineSetup/installTmuxCentOS.sh -o installTmuxCentOS.sh
+curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installTmuxCentOS.sh -o installTmuxCentOS.sh
 chmod u+x installTmuxCentOS.sh
 /bin/bash ./installTmuxCentOS.sh
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
@@ -324,7 +324,7 @@ sleep 1
 # user to docker group, then runs.
 printf "\n${BOLD}Finally we'll install docker...${NF}\n"
 printf "${BOLD}Pulling install script from GitHub...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/development/NewMachineSetup/installDockerCentOS.sh -o installDockerCentOS.sh
+curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installDockerCentOS.sh -o installDockerCentOS.sh
 chmod u+x installDockerCentOS.sh
 printf "# Add $LimitedUserName to docker group to avoid needing sudo\nprintf \"\\n${BOLD}Adding $LimitedUserName to docker group...${NF}\"\nusermod -aG docker $LimitedUserName\nprintf \"${BOLD}${WHITE}Done.${NF}\\n\"\n\n# Hand control back to setup.sh\nprintf \"\\n${BOLD}Handing control back to setup.sh...${NF}\\n\"" >> installDockerCentOS.sh
 chmod u+x installDockerCentOS.sh
