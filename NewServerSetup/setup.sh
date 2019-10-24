@@ -258,7 +258,7 @@ sleep 1
 # Install fish, the sane shell, and setting it as the default shell for $LimitedUserName
 printf "\n${BOLD}Installing fish...${NF}\n"
 cd /etc/yum.repos.d/
-wget -nv https://download.opensuse.org/repositories/shells:fish:release:2/CentOS_7/shells:fish:release:2.repo
+wget -nv https://download.opensuse.org/repositories/shells:fish:release:3/RHEL_7/shells:fish:release:3.repo
 yum -y install fish 1>> ~/setup.log
 cd ~
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
