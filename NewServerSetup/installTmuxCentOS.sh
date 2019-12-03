@@ -9,7 +9,7 @@
 ############################################
 
 # Set this version flag to allow easy updates
-VERSION=2.8
+VERSION=3.0a
 
 # Remove previous installs
 sudo yum -y remove tmux
