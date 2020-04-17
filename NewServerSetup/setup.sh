@@ -18,9 +18,10 @@
 ##  9.  gcc                                               ##
 ##  10. htop                                              ##
 ##  11. iftop                                             ##
-##  12. tree                                             ##
-##  13. tmux                                              ##
-##  14. docker                                            ##
+##  12. nload                                             ##
+##  13. tree                                              ##
+##  14. tmux                                              ##
+##  15. docker                                            ##
 ##  As well as sets up a few other bits and pieces.       ##
 ############################################################
 
@@ -296,6 +297,12 @@ sleep 1
 # Install iftop, to keep an eye on the network
 printf "\n${BOLD}Installing iftop...${NF}\n"
 yum -y install iftop 1>> ~/setup.log
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+sleep 1
+
+# Install nload, to keep an eye on the network in a bit more of a friend way
+printf "\n${BOLD}Installing nload...${NF}\n"
+yum -y install nload 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
