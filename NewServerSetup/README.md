@@ -4,6 +4,6 @@
 
 That said, if you do for some reason want to use this script (that I have made for my own personal use) to setup a CentOS system, here you go:
 
->`curl -fsSL https://cnsm.ist/centos7setup -o setup.sh && chmod u+x setup.sh && ./setup.sh`
+>`curl -fsSL http://cnsm.ist/centos7setupScript -o setup.sh && chmod u+x setup.sh && ./setup.sh`
 
 Have fun!
