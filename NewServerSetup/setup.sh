@@ -2,9 +2,9 @@
 
 ##############################
 ##  Jayden Kerr 25/10/2018  ##
-##    Updated 15/04/2019    ##
+##    Updated 02/01/2021    ##
 ##############################
-##  Version 1.0.1 ##
+##  Version 1.0.2 ##
 ############################################################
 ##  CentOS Packaging Script. Installs the following:      ##
 ##  1.  epel-release                                      ##
@@ -38,7 +38,7 @@ NB="\033[21m" # No bold
 BOLD="\033[1m" # Bold text
 NC="\033[39m" # Default text colour
 
-printf "\n\n${WHITE}##############################\n##  Jayden Kerr 15/04/2019  ##\n##############################\n##        Version 1.1       ##\n##############################\n##  CentOS Packaging Script ##\n##############################${NF}\n\n"
+printf "\n\n${WHITE}##############################\n##  Jayden Kerr 02/01/2021  ##\n##############################\n##        Version 1.1       ##\n##############################\n##  CentOS Packaging Script ##\n##############################${NF}\n\n"
 
 # Welcome
 printf "\n${BOLD}Welcome, let's get this machine setup.${NF}\n"
