@@ -1,9 +1,9 @@
 #!/bin/bash
 
 ##############################
-##  Jayden Kerr 27/10/2018  ##
+##  Jayden Kerr 02/01/2021  ##
 ##############################
-##  Version 0.1 ##
+##  Version 0.2 ##
 ##############################################################
 ##  Installs Docker CE on CentOS using instructions from    ##
 ##  https://docs.docker.com/install/linux/docker-ce/centos/ ##
@@ -51,7 +51,7 @@ sleep 0.2
 
 # We can now install Docker, start it, and enable it to start on boot
 printf "\n${BOLD}Let's now install Docker CE...${NF}\n"
-yum -y install docker-ce
+yum install docker-ce docker-ce-cli containerd.io
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 0.2
 printf "\n${BOLD}We can now start it and link it to start on boot...${NF}\n"
@@ -62,7 +62,7 @@ sleep 1
 
 # Let's also install docker-compose
 printf "\n${BOLD}Let's now install Docker Compose...${NF}\n"
-VERSION=1.25
+VERSION=1.27.4
 sudo curl -fsSL https://github.com/docker/compose/releases/download/$VERSION/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 docker-compose --version
