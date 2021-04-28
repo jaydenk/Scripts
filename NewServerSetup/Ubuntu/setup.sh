@@ -6,7 +6,7 @@
 ##############################
 ##  Version 1.0.2 ##
 ############################################################
-##  CentOS Packaging Script. Installs the following:      ##
+##  Ubuntu Packaging Script. Installs the following:      ##
 ##  1.  epel-release                                      ##
 ##  2.  fail2ban                                          ##
 ##  3.  wget                                              ##
@@ -77,7 +77,7 @@ createLimitedUser () {
   useradd $LimitedUserName
   sleep 0.2
   sudo passwd $LimitedUserName
-  usermod -aG wheel $LimitedUserName
+  usermod -aG sudo $LimitedUserName
 }
 questionUser () {
         while true; do
@@ -105,7 +105,7 @@ createRecoveryUser () {
   useradd $RecoveryUserName
   sleep 0.2
   sudo passwd $RecoveryUserName
-  usermod -aG wheel $RecoveryUserName
+  usermod -aG sudo $RecoveryUserName
 }
 questionUser () {
         while true; do
@@ -171,24 +171,18 @@ sleep 1
 # Update the OS before starting to install packages
 printf "${BOLD}\nStep 6.${NF}\n"
 printf "\n${BOLD}We will now update the OS before commencing package installs...${NF}\n"
-sudo yum -y update 1>> ~/setup.log
-sudo yum -y upgrade 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
-
-# Install CentOS-EPEL release repo
-printf "\n${BOLD}Adding the CentOS EPEL repo...${NF}\n"
-sudo yum -y install epel-release 1>> ~/setup.log
+sudo apt -y upgrade 1>> ~/setup.log
+sudo apt -y upgrade 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Let's start installing a few packages
-printf "${BOLD}\nStep 7.${NF}\n"
+printf "${BOLD}\nStep 6.${NF}\n"
 printf "\n${BOLD}We will now install a few key pieces of software and configure them.${NF}\n"
 
 # Installing git
 printf "\n${BOLD}Installing git...${NF}\n"
-sudo yum -y install git 1>> ~/setup.log
+sudo apt -y install git 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
@@ -217,13 +211,13 @@ sleep 1
 
 # Install wget
 printf "\n${BOLD}Installing wget...${NF}\n"
-yum -y install wget 1>> ~/setup.log
+apt -y install wget 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install fail2ban and configure to enable SSH blocking
 printf "\n${BOLD}Installing fail2ban...\n${NF}"
-yum -y install fail2ban 1>> ~/setup.log
+apt -y install fail2ban 1>> ~/setup.log
 systemctl start fail2ban
 systemctl enable fail2ban
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
@@ -246,21 +240,20 @@ sleep 1
 
 # Install nano, the sane text editor
 printf "\n${BOLD}Installing nano...${NF}\n"
-yum -y install nano 1>> ~/setup.log
+apt -y install nano 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install vim, because everyone should know how to exit it
 printf "\n${BOLD}Installing vim...${NF}\n"
-yum -y install vim 1>> ~/setup.log
+apt -y install vim 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install fish, the sane shell, and setting it as the default shell for $LimitedUserName
 printf "\n${BOLD}Installing fish...${NF}\n"
-cd /etc/yum.repos.d/
-wget -nv https://download.opensuse.org/repositories/shells:fish:release:3/RHEL_7/shells:fish:release:3.repo
-yum -y install fish 1>> ~/setup.log
+apt-add-repository ppa:fish-shell/release-3 -y
+apt -y install fish 1>> ~/setup.log
 cd ~
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 0.2
@@ -269,46 +262,65 @@ chsh -s /usr/bin/fish $LimitedUserName
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
-# Install mosh, the only way to connect. Adds firewall exceptions for port range 60000-61000.
+# Install mosh, the only way to connect.
 printf "\n${BOLD}Installing mosh...${NF}\n"
-yum -y install mosh 1>> ~/setup.log
+apt -y install mosh 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 0.2
-printf "\n${BOLD}Adding firewall exception for port range 60000-61000, and reloading firewall...\n${NF}"
+
+# Enabled firewall, and add firewall exceptions for port range 60000-61000.
+printf "\n${BOLD}Adding firewall exception for SSH, HTTP/S and, port range 60000-61000, and reloading firewall...\n${NF}"
 printf "\n${BOLD}Firewall exception: ${NF}${WHITE}"
-firewall-cmd --zone=public --permanent --add-port=60000-61000/udp
-printf "\n${NF}${BOLD}Firewall reload: ${NF}${WHITE}"
-firewall-cmd --reload
+printf "\n${BOLD}Default outgoing rules... ${NF}${WHITE}"
+ufw default allow outgoing
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${BOLD}Default incoming rules... ${NF}${WHITE}"
+ufw default allow incoming
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${BOLD}SSH... ${NF}${WHITE}"
+ufw allow ssh
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${BOLD}HTTP/S... ${NF}${WHITE}"
+ufw allow http
+ufw allow https
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${BOLD}Mosh rules... ${NF}${WHITE}"
+ufw allow 60000:61000/udp
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${NF}${BOLD}Enable firewall: ${NF}${WHITE}"
+ufw --force enable
+printf "\n${BOLD}${WHITE}Done.${NF}\n"
+printf "\n${BOLD}Firewall status: ${NF}${WHITE}"
+ufw status
 sleep 1
 
 # Install gcc, just in case you know.
 printf "\n${BOLD}Installing gcc...${NF}\n"
-yum -y install gcc 1>> ~/setup.log
+apt -y install gcc 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install htop, to keep an eye on this nonsense.
 printf "\n${BOLD}Installing htop...${NF}\n"
-yum -y install htop 1>> ~/setup.log
+apt -y install htop 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install iftop, to keep an eye on the network
 printf "\n${BOLD}Installing iftop...${NF}\n"
-yum -y install iftop 1>> ~/setup.log
+apt -y install iftop 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
-# Install nload, to keep an eye on the network in a bit more of a friend way
+# Install nload, to keep an eye on the network in a bit more of a friendly way
 printf "\n${BOLD}Installing nload...${NF}\n"
-yum -y install nload 1>> ~/setup.log
+apt -y install nload 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
 # Install tree, to dig through the mess
 printf "\n${BOLD}Installing tree...${NF}\n"
-yum -y install tree 1>> ~/setup.log
+apt -y install tree 1>> ~/setup.log
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
@@ -318,12 +330,9 @@ ln -s /home/$LimitedUserName/.dotfiles/tmux.conf /home/$LimitedUserName/.tmux.co
 printf "${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
-# Install tmux, building from source. This requires the script to be kept
-# upto date when new builds are released.
-printf "\n${BOLD}Installing tmux from source, this may take a few seconds...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installTmuxCentOS.sh -o installTmuxCentOS.sh
-chmod u+x installTmuxCentOS.sh
-/bin/bash ./installTmuxCentOS.sh
+# Installing tmux
+printf "\n${BOLD}Installing tmux...${NF}\n"
+apt -y install tmux
 printf "\n${BOLD}${WHITE}Done.${NF}\n"
 sleep 1
 
@@ -331,11 +340,11 @@ sleep 1
 # user to docker group, then runs.
 printf "\n${BOLD}Finally we'll install docker...${NF}\n"
 printf "${BOLD}Pulling install script from GitHub...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installDockerCentOS.sh -o installDockerCentOS.sh
-chmod u+x installDockerCentOS.sh
+curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installDockerUbuntu.sh -o installDockerUbuntu.sh
+chmod u+x installDockerUbuntu.sh
 printf "# Add $LimitedUserName to docker group to avoid needing sudo\nprintf \"\\n${BOLD}Adding $LimitedUserName to docker group...${NF}\"\nusermod -aG docker $LimitedUserName\nprintf \"${BOLD}${WHITE}Done.${NF}\\n\"\n\n# Hand control back to setup.sh\nprintf \"\\n${BOLD}Handing control back to setup.sh...${NF}\\n\"" >> installDockerCentOS.sh
-chmod u+x installDockerCentOS.sh
-/bin/bash ./installDockerCentOS.sh
+chmod u+x installDockerUbuntu.sh
+/bin/bash ./installDockerUbuntu.sh
 sleep 1
 
 # And that's it!
