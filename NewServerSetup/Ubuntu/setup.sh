@@ -340,7 +340,7 @@ sleep 1
 # user to docker group, then runs.
 printf "\n${BOLD}Finally we'll install docker...${NF}\n"
 printf "${BOLD}Pulling install script from GitHub...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/master/NewServerSetup/installDockerUbuntu.sh -o installDockerUbuntu.sh
+curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/Multiple_OSes/NewServerSetup/Ubuntu/installDockerUbuntu.sh -o installDockerUbuntu.sh
 chmod u+x installDockerUbuntu.sh
 printf "# Add $LimitedUserName to docker group to avoid needing sudo\nprintf \"\\n${BOLD}Adding $LimitedUserName to docker group...${NF}\"\nusermod -aG docker $LimitedUserName\nprintf \"${BOLD}${WHITE}Done.${NF}\\n\"\n\n# Hand control back to setup.sh\nprintf \"\\n${BOLD}Handing control back to setup.sh...${NF}\\n\"" >> installDockerCentOS.sh
 chmod u+x installDockerUbuntu.sh
