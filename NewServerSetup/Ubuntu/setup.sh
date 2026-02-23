@@ -1,351 +1,753 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ##############################
-##  Jayden Kerr 25/10/2018  ##
-##    Updated 02/01/2021    ##
+##  Jayden Kerr             ##
+##  Originally: 25/10/2018  ##
+##  Rewritten:  23/02/2026  ##
 ##############################
-##  Version 1.0.2 ##
+##  Version 2.0.0           ##
 ############################################################
-##  Ubuntu Packaging Script. Installs the following:      ##
-##  1.  epel-release                                      ##
-##  2.  fail2ban                                          ##
-##  3.  wget                                              ##
-##  4.  nano                                              ##
-##  5.  vim                                               ##
-##  6.  fish                                              ##
-##  7.  mosh                                              ##
-##  8.  git                                               ##
-##  9.  gcc                                               ##
-##  10. htop                                              ##
-##  11. iftop                                             ##
-##  12. nload                                             ##
-##  13. tree                                              ##
-##  14. tmux                                              ##
-##  15. docker                                            ##
-##  As well as sets up a few other bits and pieces.       ##
+##  Ubuntu Server Setup Script                            ##
+##                                                        ##
+##  Interactive server provisioning with selectable       ##
+##  package groups, user management, security hardening,  ##
+##  Docker, and Tailscale installation.                   ##
 ############################################################
 
-##################################
-##  PART 1 - TO BE RUN AS root  ##
-##################################
+set -euo pipefail
 
-# Instance variables
-localIP=$(hostname -I)
-RED="\033[0;31m" # Red text
-WHITE="\033[1;37m" # White text
-NF="\033[0m" # No formatting
-NB="\033[21m" # No bold
-BOLD="\033[1m" # Bold text
+# ─── Colours and Formatting ──────────────────────────────
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+WHITE="\033[1;37m"
+BOLD="\033[1m"
+DIM="\033[2m"
+NF="\033[0m"  # Reset all formatting
 NC="\033[39m" # Default text colour
 
-printf "\n\n${WHITE}##############################\n##  Jayden Kerr 02/01/2021  ##\n##############################\n##        Version 1.1       ##\n##############################\n##  CentOS Packaging Script ##\n##############################${NF}\n\n"
+# ─── Configuration ───────────────────────────────────────
+LOG_FILE="${HOME}/server-setup.log"
+DOTFILES_REPO="https://github.com/jaydenk/dotfiles.git"
+DEFAULT_TIMEZONE="Australia/Adelaide"
 
-# Welcome
-printf "\n${BOLD}Welcome, let's get this machine setup.${NF}\n"
+# Track created users for later steps
+LIMITED_USER=""
+RECOVERY_USER=""
 
-# Change root password
-printf "${BOLD}\nStep 1.${NF}\n"
-question="change the root password?"
-actionToPerform=$(echo "hi")
-actionToSkip="changing the root password."
-changeRootPassword () {
-  printf "${BOLD}We will now change the root password, because that's a good idea.${NF}\n"
-  passwd
+# ─── Logging ─────────────────────────────────────────────
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_FILE}"
 }
-questionUser () {
-        while true; do
-                read -p "Do you wish to ${1} [y/n] " yn
-                case $yn in
-                        [Yy]* ) changeRootPassword; sleep 1; break;;
-                        [Nn]* ) printf "Skipping ${2}\n"; sleep 1; break;;
-                        * ) printf "Please answer [y]es or [n]o.\n";;
-                esac
+
+info() {
+    printf "${BOLD}%s${NF}\n" "$*"
+    log "INFO: $*"
+}
+
+success() {
+    printf "${GREEN}${BOLD}✓ %s${NF}\n" "$*"
+    log "OK: $*"
+}
+
+warn() {
+    printf "${YELLOW}${BOLD}⚠ %s${NF}\n" "$*"
+    log "WARN: $*"
+}
+
+error() {
+    printf "${RED}${BOLD}✗ %s${NF}\n" "$*" >&2
+    log "ERROR: $*"
+}
+
+# ─── Error Trap ──────────────────────────────────────────
+cleanup() {
+    local exit_code=$?
+    if [[ ${exit_code} -ne 0 ]]; then
+        error "Script failed at line ${BASH_LINENO[0]} with exit code ${exit_code}."
+        error "Check ${LOG_FILE} for details."
+    fi
+}
+trap cleanup EXIT
+
+# ─── Pre-flight Checks ──────────────────────────────────
+preflight_checks() {
+    # Must be root
+    if [[ "${EUID}" -ne 0 ]]; then
+        error "This script must be run as root."
+        exit 1
+    fi
+
+    # Must be Ubuntu/Debian
+    if [[ ! -f /etc/os-release ]]; then
+        error "Cannot detect OS. /etc/os-release not found."
+        exit 1
+    fi
+
+    source /etc/os-release
+    if [[ "${ID}" != "ubuntu" && "${ID}" != "debian" ]]; then
+        error "This script is designed for Ubuntu/Debian. Detected: ${ID}"
+        exit 1
+    fi
+
+    info "Detected ${PRETTY_NAME}"
+    log "Starting setup on ${PRETTY_NAME} ($(uname -r))"
+}
+
+# ─── Helper: Yes/No Prompt ──────────────────────────────
+confirm() {
+    local prompt="${1}"
+    local default="${2:-y}"
+    local reply
+
+    if [[ "${default}" == "y" ]]; then
+        prompt="${prompt} [Y/n] "
+    else
+        prompt="${prompt} [y/N] "
+    fi
+
+    while true; do
+        read -rp "${prompt}" reply
+        reply="${reply:-${default}}"
+        case "${reply}" in
+            [Yy]*) return 0 ;;
+            [Nn]*) return 1 ;;
+            *) printf "Please answer y or n.\n" ;;
+        esac
+    done
+}
+
+# ─── Helper: Run command with logging ────────────────────
+run() {
+    log "CMD: $*"
+    "$@" >> "${LOG_FILE}" 2>&1
+}
+
+# ─── Package Selection Menu ─────────────────────────────
+declare -A PKG_SELECTED
+
+select_packages() {
+    printf "\n${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n"
+    printf "${WHITE}${BOLD}  Package Selection${NF}\n"
+    printf "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n\n"
+
+    info "Select which package groups to install."
+    printf "${DIM}Answer y/n for each group.${NF}\n\n"
+
+    # Essentials: nano, vim, wget, curl, git, tree
+    if confirm "  Essentials (nano, vim, wget, curl, git, tree)?"; then
+        PKG_SELECTED[essentials]=1
+    else
+        PKG_SELECTED[essentials]=0
+    fi
+
+    # Shell: fish shell
+    if confirm "  Fish shell (set as default for limited user)?"; then
+        PKG_SELECTED[fish]=1
+    else
+        PKG_SELECTED[fish]=0
+    fi
+
+    # Remote access: mosh, tmux
+    if confirm "  Remote access tools (mosh, tmux)?"; then
+        PKG_SELECTED[remote]=1
+    else
+        PKG_SELECTED[remote]=0
+    fi
+
+    # Monitoring: htop, iftop, nload
+    if confirm "  Monitoring tools (htop, iftop, nload)?"; then
+        PKG_SELECTED[monitoring]=1
+    else
+        PKG_SELECTED[monitoring]=0
+    fi
+
+    # Security: fail2ban, ufw
+    if confirm "  Security tools (fail2ban, ufw)?"; then
+        PKG_SELECTED[security]=1
+    else
+        PKG_SELECTED[security]=0
+    fi
+
+    # Development: gcc, build-essential
+    if confirm "  Development tools (gcc, build-essential)?"; then
+        PKG_SELECTED[dev]=1
+    else
+        PKG_SELECTED[dev]=0
+    fi
+
+    # Docker
+    if confirm "  Docker Engine + Compose?"; then
+        PKG_SELECTED[docker]=1
+    else
+        PKG_SELECTED[docker]=0
+    fi
+
+    # Tailscale
+    if confirm "  Tailscale VPN?"; then
+        PKG_SELECTED[tailscale]=1
+    else
+        PKG_SELECTED[tailscale]=0
+    fi
+
+    # Summary
+    printf "\n${BOLD}Selected:${NF} "
+    local selected=()
+    for key in essentials fish remote monitoring security dev docker tailscale; do
+        if [[ "${PKG_SELECTED[$key]}" -eq 1 ]]; then
+            selected+=("${key}")
+        fi
+    done
+    if [[ ${#selected[@]} -eq 0 ]]; then
+        printf "${DIM}(none)${NF}\n"
+    else
+        printf "%s\n" "${selected[*]}"
+    fi
+    printf "\n"
+}
+
+# ─── Step: Change Root Password ─────────────────────────
+step_root_password() {
+    printf "\n${WHITE}━━━ Step 1: Root Password ━━━${NF}\n\n"
+    if confirm "Change the root password?"; then
+        passwd
+        success "Root password changed."
+    else
+        info "Skipping root password change."
+    fi
+}
+
+# ─── Step: Create Limited User ──────────────────────────
+step_limited_user() {
+    printf "\n${WHITE}━━━ Step 2: Limited User ━━━${NF}\n\n"
+    if confirm "Create a limited (non-root) user?"; then
+        printf "${BOLD}Enter the desired username: ${NF}"
+        read -r LIMITED_USER
+
+        if id "${LIMITED_USER}" &>/dev/null; then
+            warn "User '${LIMITED_USER}' already exists. Skipping creation."
+        else
+            useradd -m -s /bin/bash "${LIMITED_USER}"
+            info "Set a password for ${LIMITED_USER}:"
+            passwd "${LIMITED_USER}"
+            usermod -aG sudo "${LIMITED_USER}"
+            success "User '${LIMITED_USER}' created with sudo access."
+        fi
+    else
+        info "Skipping limited user creation."
+        printf "${BOLD}Enter an existing username to configure (or leave blank to skip): ${NF}"
+        read -r LIMITED_USER
+    fi
+}
+
+# ─── Step: Create Recovery User ─────────────────────────
+step_recovery_user() {
+    printf "\n${WHITE}━━━ Step 3: Recovery User ━━━${NF}\n\n"
+    info "A recovery user can SSH in with a password if key auth is unavailable."
+    if confirm "Create a recovery user?"; then
+        printf "${BOLD}Enter the desired username: ${NF}"
+        read -r RECOVERY_USER
+
+        if id "${RECOVERY_USER}" &>/dev/null; then
+            warn "User '${RECOVERY_USER}' already exists. Skipping creation."
+        else
+            useradd -m -s /bin/bash "${RECOVERY_USER}"
+            info "Set a password for ${RECOVERY_USER}:"
+            passwd "${RECOVERY_USER}"
+            usermod -aG sudo "${RECOVERY_USER}"
+            success "Recovery user '${RECOVERY_USER}' created with sudo access."
+        fi
+    else
+        info "Skipping recovery user creation."
+    fi
+}
+
+# ─── Step: SSH Key Setup ────────────────────────────────
+step_ssh_keys() {
+    if [[ -z "${LIMITED_USER}" ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Step 4: SSH Key Setup ━━━${NF}\n\n"
+
+    local ssh_dir="/home/${LIMITED_USER}/.ssh"
+    mkdir -p "${ssh_dir}"
+    chown "${LIMITED_USER}:${LIMITED_USER}" "${ssh_dir}"
+    chmod 700 "${ssh_dir}"
+
+    local local_ip
+    local_ip=$(hostname -I | awk '{print $1}')
+
+    info "Copy your SSH public key to this machine now."
+    printf "\n  ${DIM}Example:${NF}\n"
+    printf "  ${WHITE}ssh-copy-id ${LIMITED_USER}@${local_ip}${NF}\n"
+    printf "  ${DIM}Or:${NF}\n"
+    printf "  ${WHITE}scp ~/.ssh/id_ed25519.pub ${LIMITED_USER}@${local_ip}:~/.ssh/authorized_keys${NF}\n\n"
+
+    read -n 1 -s -r -p "Press any key once your key has been copied..."
+    printf "\n"
+
+    # Ensure correct permissions on authorized_keys if it exists
+    if [[ -f "${ssh_dir}/authorized_keys" ]]; then
+        chown "${LIMITED_USER}:${LIMITED_USER}" "${ssh_dir}/authorized_keys"
+        chmod 600 "${ssh_dir}/authorized_keys"
+        success "SSH key permissions set."
+    else
+        warn "No authorized_keys file found. SSH key auth may not work."
+    fi
+}
+
+# ─── Step: Hostname ─────────────────────────────────────
+step_hostname() {
+    printf "\n${WHITE}━━━ Step 5: Hostname ━━━${NF}\n\n"
+    info "Current hostname: $(hostname)"
+    if confirm "Change the hostname?"; then
+        printf "${BOLD}Enter new hostname: ${NF}"
+        read -r new_hostname
+        hostnamectl set-hostname "${new_hostname}"
+        success "Hostname set to $(hostname)."
+    else
+        info "Keeping current hostname."
+    fi
+}
+
+# ─── Step: Timezone ─────────────────────────────────────
+step_timezone() {
+    printf "\n${WHITE}━━━ Step 6: Timezone ━━━${NF}\n\n"
+    info "Current timezone: $(timedatectl show --property=Timezone --value 2>/dev/null || echo 'unknown')"
+    if confirm "Set timezone to ${DEFAULT_TIMEZONE}?" "y"; then
+        timedatectl set-timezone "${DEFAULT_TIMEZONE}"
+        success "Timezone set to ${DEFAULT_TIMEZONE}."
+    elif confirm "Set a different timezone?"; then
+        printf "${BOLD}Enter timezone (e.g. Australia/Sydney): ${NF}"
+        read -r tz
+        if timedatectl set-timezone "${tz}" 2>/dev/null; then
+            success "Timezone set to ${tz}."
+        else
+            error "Invalid timezone: ${tz}. Leaving unchanged."
+        fi
+    else
+        info "Keeping current timezone."
+    fi
+}
+
+# ─── Step: System Update ────────────────────────────────
+step_update() {
+    printf "\n${WHITE}━━━ Step 7: System Update ━━━${NF}\n\n"
+    info "Updating package lists and upgrading existing packages..."
+    run apt-get update
+    run apt-get -y upgrade
+    success "System updated."
+}
+
+# ─── Step: Install Essential Packages ────────────────────
+step_install_essentials() {
+    if [[ "${PKG_SELECTED[essentials]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Essentials ━━━${NF}\n\n"
+    info "Installing nano, vim, wget, curl, git, tree..."
+    run apt-get -y install nano vim wget curl git tree ca-certificates gnupg
+    success "Essentials installed."
+}
+
+# ─── Step: Clone Dotfiles ───────────────────────────────
+step_dotfiles() {
+    if [[ -z "${LIMITED_USER}" ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Dotfiles ━━━${NF}\n\n"
+    if confirm "Clone dotfiles from ${DOTFILES_REPO}?"; then
+        local dotfiles_dir="/home/${LIMITED_USER}/.dotfiles"
+        if [[ -d "${dotfiles_dir}" ]]; then
+            warn "Dotfiles directory already exists. Pulling latest..."
+            run git -C "${dotfiles_dir}" pull
+        else
+            run git clone "${DOTFILES_REPO}" "${dotfiles_dir}"
+            chown -R "${LIMITED_USER}:${LIMITED_USER}" "${dotfiles_dir}"
+        fi
+        success "Dotfiles ready at ${dotfiles_dir}."
+    else
+        info "Skipping dotfiles."
+    fi
+}
+
+# ─── Step: SSH Hardening ────────────────────────────────
+step_ssh_hardening() {
+    printf "\n${WHITE}━━━ SSH Hardening ━━━${NF}\n\n"
+    if ! confirm "Harden SSH configuration (disable root login, require key auth)?"; then
+        info "Skipping SSH hardening."
+        return
+    fi
+
+    local sshd_config="/etc/ssh/sshd_config"
+
+    # Back up current config
+    cp "${sshd_config}" "${sshd_config}.bak.$(date +%s)"
+    info "Backed up current sshd_config."
+
+    # Apply hardening settings
+    local settings=(
+        "PermitRootLogin no"
+        "PasswordAuthentication no"
+        "PubkeyAuthentication yes"
+        "ChallengeResponseAuthentication no"
+        "X11Forwarding no"
+        "MaxAuthTries 5"
+        "ClientAliveInterval 300"
+        "ClientAliveCountMax 2"
+    )
+
+    for setting in "${settings[@]}"; do
+        local key="${setting%% *}"
+        # Comment out any existing setting, then append the new one
+        sed -i "s/^#*\s*${key}\s.*/#&/" "${sshd_config}"
+    done
+
+    # Append hardened settings
+    {
+        echo ""
+        echo "# ─── Hardened settings (added by setup.sh) ───"
+        for setting in "${settings[@]}"; do
+            echo "${setting}"
         done
+    } >> "${sshd_config}"
+
+    # Add recovery user password exception if applicable
+    if [[ -n "${RECOVERY_USER}" ]]; then
+        {
+            echo ""
+            echo "# Recovery user: allow password authentication"
+            echo "Match User ${RECOVERY_USER}"
+            echo "    PasswordAuthentication yes"
+        } >> "${sshd_config}"
+        info "Added password auth exception for recovery user '${RECOVERY_USER}'."
+    fi
+
+    # Validate config before restarting
+    if sshd -t 2>/dev/null; then
+        systemctl restart sshd
+        success "SSH hardened and restarted."
+    else
+        error "sshd_config validation failed. Restoring backup."
+        cp "${sshd_config}.bak."* "${sshd_config}" 2>/dev/null
+        systemctl restart sshd
+    fi
 }
-questionUser "$question" "$actionToSkip"
 
-# Create limited user
-printf "${BOLD}\nStep 2.${NF}\n"
-question="create a limited user?"
-actionToSkip="creation of limited user."
-createLimitedUser () {
-  printf "\n${BOLD}Now let's create a limited user and set a password for it.${NF}\n"
-  printf "\n${BOLD}Please enter the desired username: ${NF}${WHITE}"
-  read LimitedUserName
-  sleep 0.2
-  printf "\n${NF}${BOLD}Cool. ${WHITE}$LimitedUserName${NC} it is.${NF}\n"
-  useradd $LimitedUserName
-  sleep 0.2
-  sudo passwd $LimitedUserName
-  usermod -aG sudo $LimitedUserName
+# ─── Step: Install Fish Shell ────────────────────────────
+step_install_fish() {
+    if [[ "${PKG_SELECTED[fish]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Fish Shell ━━━${NF}\n\n"
+    run apt-get -y install software-properties-common
+    run apt-add-repository -y ppa:fish-shell/release-3
+    run apt-get update
+    run apt-get -y install fish
+    success "Fish shell installed."
+
+    if [[ -n "${LIMITED_USER}" ]]; then
+        local fish_path
+        fish_path=$(which fish)
+        chsh -s "${fish_path}" "${LIMITED_USER}"
+        success "Fish set as default shell for ${LIMITED_USER}."
+    fi
 }
-questionUser () {
-        while true; do
-                read -p "Do you wish to ${1} [y/n] " yn
-                case $yn in
-                        [Yy]* ) createLimitedUser; sleep 1; break;;
-                        [Nn]* ) printf "Skipping ${2}\n"; sleep 1; break;;
-                        * ) printf "Please answer [y]es or [n]o.\n";;
-                esac
-        done
+
+# ─── Step: Install Remote Access Tools ───────────────────
+step_install_remote() {
+    if [[ "${PKG_SELECTED[remote]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Remote Access Tools ━━━${NF}\n\n"
+    info "Installing mosh and tmux..."
+    run apt-get -y install mosh tmux
+    success "mosh and tmux installed."
+
+    # Symlink tmux.conf if dotfiles exist
+    if [[ -n "${LIMITED_USER}" ]]; then
+        local tmux_src="/home/${LIMITED_USER}/.dotfiles/tmux.conf"
+        local tmux_dest="/home/${LIMITED_USER}/.tmux.conf"
+        if [[ -f "${tmux_src}" && ! -e "${tmux_dest}" ]]; then
+            ln -s "${tmux_src}" "${tmux_dest}"
+            chown -h "${LIMITED_USER}:${LIMITED_USER}" "${tmux_dest}"
+            success "Linked tmux.conf from dotfiles."
+        fi
+    fi
 }
-questionUser "$question" "$actionToSkip"
 
-# Create recovery user for SSH
-# This user will be the only user that can SSH into the machine without a key
-printf "${BOLD}\nStep 3.${NF}\n"
-question="create a recovery user?"
-actionToSkip="creation of recovery user."
-createRecoveryUser () {
-  printf "\n${BOLD}Nice. Now let's create an SSH recovery user and set a password for it.${NF}\n"
-  printf "\n${BOLD}Please enter the desired username: ${NF}${WHITE}"
-  read RecoveryUserName
-  sleep 0.2
-  printf "\n${NF}${BOLD}Cool. ${WHITE}$RecoveryUserName${NC} it is.${NF}\n"
-  useradd $RecoveryUserName
-  sleep 0.2
-  sudo passwd $RecoveryUserName
-  usermod -aG sudo $RecoveryUserName
+# ─── Step: Install Monitoring Tools ──────────────────────
+step_install_monitoring() {
+    if [[ "${PKG_SELECTED[monitoring]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Monitoring Tools ━━━${NF}\n\n"
+    info "Installing htop, iftop, nload..."
+    run apt-get -y install htop iftop nload
+    success "Monitoring tools installed."
 }
-questionUser () {
-        while true; do
-                read -p "Do you wish to ${1} [y/n] " yn
-                case $yn in
-                        [Yy]* ) createRecoveryUser; sleep 1; break;;
-                        [Nn]* ) printf "Skipping ${2}\n"; sleep 1; break;;
-                        * ) printf "Please answer [y]es or [n]o.\n";;
-                esac
-        done
+
+# ─── Step: Install Security Tools ────────────────────────
+step_install_security() {
+    if [[ "${PKG_SELECTED[security]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Security Tools ━━━${NF}\n\n"
+
+    # fail2ban
+    info "Installing fail2ban..."
+    run apt-get -y install fail2ban
+    systemctl enable fail2ban >> "${LOG_FILE}" 2>&1
+    systemctl start fail2ban >> "${LOG_FILE}" 2>&1
+
+    # Create jail.local with sane defaults
+    if [[ ! -f /etc/fail2ban/jail.local ]]; then
+        cat > /etc/fail2ban/jail.local <<'JAIL'
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+port    = ssh
+filter  = sshd
+logpath = /var/log/auth.log
+JAIL
+        # If dotfiles jail.local exists, prefer it
+        if [[ -n "${LIMITED_USER}" ]]; then
+            local jail_src="/home/${LIMITED_USER}/.dotfiles/fail2ban.jail.local"
+            if [[ -f "${jail_src}" ]]; then
+                cp "${jail_src}" /etc/fail2ban/jail.local
+                info "Using jail.local from dotfiles."
+            fi
+        fi
+
+        chown root:root /etc/fail2ban/jail.local
+        chmod 644 /etc/fail2ban/jail.local
+        fail2ban-client reload >> "${LOG_FILE}" 2>&1 || true
+    fi
+    success "fail2ban installed and configured."
+
+    # UFW firewall
+    info "Configuring UFW firewall..."
+    run apt-get -y install ufw
+
+    ufw default deny incoming >> "${LOG_FILE}" 2>&1
+    ufw default allow outgoing >> "${LOG_FILE}" 2>&1
+    ufw allow ssh >> "${LOG_FILE}" 2>&1
+    ufw allow http >> "${LOG_FILE}" 2>&1
+    ufw allow https >> "${LOG_FILE}" 2>&1
+
+    if [[ "${PKG_SELECTED[remote]}" -eq 1 ]]; then
+        ufw allow 60000:61000/udp >> "${LOG_FILE}" 2>&1  # mosh
+        info "Allowed mosh ports (60000-61000/udp)."
+    fi
+
+    if [[ "${PKG_SELECTED[tailscale]}" -eq 1 ]]; then
+        ufw allow 41641/udp >> "${LOG_FILE}" 2>&1  # Tailscale direct connections
+        info "Allowed Tailscale port (41641/udp)."
+    fi
+
+    ufw --force enable >> "${LOG_FILE}" 2>&1
+    success "UFW firewall enabled."
+    ufw status
 }
-questionUser "$question" "$actionToSkip"
 
-# We will now create the /.ssh folder for $LimitedUserName,
-# with appropriate permissions
-mkdir -p /home/$LimitedUserName/.ssh
-chown -R $LimitedUserName /home/$LimitedUserName/.ssh
-chmod -R 700 /home/$LimitedUserName/.ssh
-printf "\n${BOLD}Please copy your SSH key to the machine now, using:\n\t${WHITE}scp ~/.ssh/id_rsa.pub $LimitedUserName@$localIP:~/.ssh/authorized_keys\n${NC}Or similar. "
-read -n 1 -s -r -p "Press any key to continue when done..."
-printf "\n\n${BOLD}sshd_config will be edited to allow login only via authorized_keys.${NF}\n"
-sleep 1
+# ─── Step: Install Development Tools ────────────────────
+step_install_dev() {
+    if [[ "${PKG_SELECTED[dev]}" -ne 1 ]]; then
+        return
+    fi
 
-# Set machine hostname
-printf "${BOLD}\nStep 4.${NF}\n"
-question="change the machine hostname?"
-actionToSkip="changing of machine hostname."
-changeHostname () {
-  printf "\n${BOLD}Let's set the hostname for this machine.${NF}\n"
-  printf "\n${BOLD}Please enter your desired hostname: ${WHITE}"
-  read machineHostname
-  printf "${NF}\n${BOLD}Cool. ${WHITE}$machineHostname${NC} it is.${NF}\n"
-  hostnamectl set-hostname $machineHostname
-  printf "\n${BOLD}Setting hostname...${NF}\n\n"
-  sleep 0.2
-  hostname
-  sleep 0.2
-  printf "\n${BOLD}${WHITE}Done.${NF}\n"
+    printf "\n${WHITE}━━━ Installing Development Tools ━━━${NF}\n\n"
+    info "Installing gcc, build-essential..."
+    run apt-get -y install gcc build-essential
+    success "Development tools installed."
 }
-questionUser () {
-        while true; do
-                read -p "Do you wish to ${1} [y/n] " yn
-                case $yn in
-                        [Yy]* ) changeHostname; sleep 1; break;;
-                        [Nn]* ) printf "Skipping ${2}\n"; sleep 1; break;;
-                        * ) printf "Please answer [y]es or [n]o.\n";;
-                esac
-        done
+
+# ─── Step: Install Docker ───────────────────────────────
+step_install_docker() {
+    if [[ "${PKG_SELECTED[docker]}" -ne 1 ]]; then
+        return
+    fi
+
+    printf "\n${WHITE}━━━ Installing Docker Engine ━━━${NF}\n\n"
+
+    # Check if Docker is already installed
+    if command -v docker &>/dev/null; then
+        warn "Docker is already installed: $(docker --version)"
+        if ! confirm "Reinstall Docker?"; then
+            info "Skipping Docker installation."
+            return
+        fi
+    fi
+
+    # Install prerequisites
+    info "Installing prerequisites..."
+    run apt-get -y install ca-certificates curl gnupg
+
+    # Add Docker's official GPG key
+    info "Adding Docker GPG key..."
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+
+    # Add the Docker repository
+    info "Adding Docker apt repository..."
+    source /etc/os-release
+    cat > /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: ${UBUNTU_CODENAME:-${VERSION_CODENAME}}
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+    # Install Docker Engine
+    info "Installing Docker Engine, CLI, and Compose plugin..."
+    run apt-get update
+    run apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    # Enable and start Docker
+    systemctl enable docker >> "${LOG_FILE}" 2>&1
+    systemctl start docker >> "${LOG_FILE}" 2>&1
+
+    # Add limited user to docker group
+    if [[ -n "${LIMITED_USER}" ]]; then
+        usermod -aG docker "${LIMITED_USER}"
+        info "Added '${LIMITED_USER}' to the docker group."
+    fi
+
+    success "Docker installed: $(docker --version)"
+    info "Docker Compose: $(docker compose version)"
 }
-questionUser "$question" "$actionToSkip"
 
-# Set the date and time correctly
-printf "${BOLD}\nStep 5.${NF}\n"
-printf "\n${BOLD}These are the current date and time settings:${NF}\n"
-timedatectl
-# TODO make this optional. For now, it just sets the timezone to AUS/ADL
-printf "\n${BOLD}Correcting timezone...${NF}\n"
-timedatectl set-timezone Australia/Adelaide
-timedatectl
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+# ─── Step: Install Tailscale ────────────────────────────
+step_install_tailscale() {
+    if [[ "${PKG_SELECTED[tailscale]}" -ne 1 ]]; then
+        return
+    fi
 
-# Update the OS before starting to install packages
-printf "${BOLD}\nStep 6.${NF}\n"
-printf "\n${BOLD}We will now update the OS before commencing package installs...${NF}\n"
-sudo apt -y upgrade 1>> ~/setup.log
-sudo apt -y upgrade 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    printf "\n${WHITE}━━━ Installing Tailscale ━━━${NF}\n\n"
 
-# Let's start installing a few packages
-printf "${BOLD}\nStep 6.${NF}\n"
-printf "\n${BOLD}We will now install a few key pieces of software and configure them.${NF}\n"
+    # Check if already installed
+    if command -v tailscale &>/dev/null; then
+        warn "Tailscale is already installed: $(tailscale version | head -1)"
+        if ! confirm "Reinstall Tailscale?"; then
+            info "Skipping Tailscale installation."
+            return
+        fi
+    fi
 
-# Installing git
-printf "\n${BOLD}Installing git...${NF}\n"
-sudo apt -y install git 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    info "Installing Tailscale via official installer..."
+    curl -fsSL https://tailscale.com/install.sh | sh >> "${LOG_FILE}" 2>&1
 
-# Clone dotfiles into /home/$LimitedUserName/.dotfiles
-printf "\n${BOLD}Cloning .dotfiles into ~/.dotfiles...${NF}\n"
-git clone https://github.com/jaydenk/dotfiles.git /home/$LimitedUserName/.dotfiles
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    # Enable and start
+    systemctl enable tailscaled >> "${LOG_FILE}" 2>&1
+    systemctl start tailscaled >> "${LOG_FILE}" 2>&1
 
-# Append recovery user exception to sshd_config
-printf "\n${BOLD}Adding exception to sshd_config for ${WHITE}$RecoveryUserName${NC}...${NF}\n"
-printf "# Add recovery user exception\nMatch User $RecoveryUserName\n\tPasswordAuthentication yes" >> /home/$LimitedUserName/.dotfiles/sshd_config
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    success "Tailscale installed: $(tailscale version | head -1)"
 
-# Move sshd_config into /etc/sshd/ and set correct permissions, then restart sshd
-printf "\n${BOLD}Moving sshd_config to /etc/sshd/ and setting correct permissions...${NF}\n"
-mv /home/$LimitedUserName/.dotfiles/sshd_config /etc/ssh/
-chown root /etc/ssh/sshd_config
-chmod 600 /etc/ssh/sshd_config
-sleep 0.2
-printf "\n${BOLD}Reloading sshd...${NF}"
-systemctl restart sshd
-printf "${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    printf "\n${BOLD}To authenticate this machine, run:${NF}\n"
+    printf "  ${WHITE}sudo tailscale up${NF}\n"
+    if confirm "Run 'tailscale up' now?"; then
+        tailscale up
+        success "Tailscale connected."
+    else
+        info "Run 'sudo tailscale up' later to connect."
+    fi
+}
 
-# Install wget
-printf "\n${BOLD}Installing wget...${NF}\n"
-apt -y install wget 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+# ─── Summary ────────────────────────────────────────────
+print_summary() {
+    printf "\n${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n"
+    printf "${GREEN}${BOLD}  Setup Complete${NF}\n"
+    printf "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n\n"
 
-# Install fail2ban and configure to enable SSH blocking
-printf "\n${BOLD}Installing fail2ban...\n${NF}"
-apt -y install fail2ban 1>> ~/setup.log
-systemctl start fail2ban
-systemctl enable fail2ban
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}Copying fail2ban.conf...${NF}"
-cp /etc/fail2ban/fail2ban.conf /etc/fail2ban/fail2ban.local
-printf "${BOLD}${WHITE}Done.${NF}\n"
-sleep 0.2
-printf "\n${BOLD}Copying jail.local from home/$LimitedUserName/.dotfiles...${NF}"
-cp /home/$LimitedUserName/.dotfiles/fail2ban.jail.local /etc/fail2ban/jail.local
-chown root /etc/fail2ban/jail.local
-chmod 644 /etc/fail2ban/jail.local
-printf "${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}Starting fail2ban-client...${NF}\n"
-fail2ban-client reload
-fail2ban-client status
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 0.2
-printf "\n${BOLD}fail2ban has been successfully installed and configued.${NF}\n"
-sleep 1
+    printf "${BOLD}Hostname:${NF}  %s\n" "$(hostname)"
+    printf "${BOLD}Timezone:${NF}  %s\n" "$(timedatectl show --property=Timezone --value 2>/dev/null || echo 'unknown')"
 
-# Install nano, the sane text editor
-printf "\n${BOLD}Installing nano...${NF}\n"
-apt -y install nano 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    if [[ -n "${LIMITED_USER}" ]]; then
+        printf "${BOLD}User:${NF}      %s\n" "${LIMITED_USER}"
+    fi
+    if [[ -n "${RECOVERY_USER}" ]]; then
+        printf "${BOLD}Recovery:${NF}  %s\n" "${RECOVERY_USER}"
+    fi
 
-# Install vim, because everyone should know how to exit it
-printf "\n${BOLD}Installing vim...${NF}\n"
-apt -y install vim 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    printf "\n${BOLD}Installed:${NF}\n"
+    for key in essentials fish remote monitoring security dev docker tailscale; do
+        if [[ "${PKG_SELECTED[$key]}" -eq 1 ]]; then
+            printf "  ${GREEN}✓${NF} %s\n" "${key}"
+        fi
+    done
 
-# Install fish, the sane shell, and setting it as the default shell for $LimitedUserName
-printf "\n${BOLD}Installing fish...${NF}\n"
-apt-add-repository ppa:fish-shell/release-3 -y
-apt -y install fish 1>> ~/setup.log
-cd ~
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 0.2
-printf "\n${BOLD}Setting fish as the default shell for $LimitedUserName...${NF}\n"
-chsh -s /usr/bin/fish $LimitedUserName
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    printf "\n${BOLD}Log file:${NF}  %s\n" "${LOG_FILE}"
 
-# Install mosh, the only way to connect.
-printf "\n${BOLD}Installing mosh...${NF}\n"
-apt -y install mosh 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 0.2
+    if [[ "${PKG_SELECTED[tailscale]}" -eq 1 ]]; then
+        printf "\n${BOLD}Reminder:${NF} Run ${WHITE}sudo tailscale up${NF} if you haven't authenticated yet.\n"
+    fi
 
-# Enabled firewall, and add firewall exceptions for port range 60000-61000.
-printf "\n${BOLD}Adding firewall exception for SSH, HTTP/S and, port range 60000-61000, and reloading firewall...\n${NF}"
-printf "\n${BOLD}Firewall exception: ${NF}${WHITE}"
-printf "\n${BOLD}Default outgoing rules... ${NF}${WHITE}"
-ufw default allow outgoing
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}Default incoming rules... ${NF}${WHITE}"
-ufw default allow incoming
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}SSH... ${NF}${WHITE}"
-ufw allow ssh
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}HTTP/S... ${NF}${WHITE}"
-ufw allow http
-ufw allow https
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}Mosh rules... ${NF}${WHITE}"
-ufw allow 60000:61000/udp
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${NF}${BOLD}Enable firewall: ${NF}${WHITE}"
-ufw --force enable
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-printf "\n${BOLD}Firewall status: ${NF}${WHITE}"
-ufw status
-sleep 1
+    if [[ -n "${LIMITED_USER}" ]]; then
+        printf "\n${BOLD}Next steps:${NF}\n"
+        printf "  1. Log out and log back in as ${WHITE}${LIMITED_USER}${NF}\n"
+        printf "  2. Verify SSH key authentication works before closing this session\n"
+        if [[ "${PKG_SELECTED[docker]}" -eq 1 ]]; then
+            printf "  3. Run ${WHITE}docker run hello-world${NF} to verify Docker\n"
+        fi
+    fi
 
-# Install gcc, just in case you know.
-printf "\n${BOLD}Installing gcc...${NF}\n"
-apt -y install gcc 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    printf "\n${BOLD}${WHITE}Enjoy your machine.${NF}\n\n"
+}
 
-# Install htop, to keep an eye on this nonsense.
-printf "\n${BOLD}Installing htop...${NF}\n"
-apt -y install htop 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+# ─── Main ────────────────────────────────────────────────
+main() {
+    printf "\n${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n"
+    printf "${WHITE}${BOLD}  Ubuntu Server Setup Script v2.0${NF}\n"
+    printf "${WHITE}${BOLD}  Jayden Kerr — 2026${NF}\n"
+    printf "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NF}\n\n"
 
-# Install iftop, to keep an eye on the network
-printf "\n${BOLD}Installing iftop...${NF}\n"
-apt -y install iftop 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    preflight_checks
 
-# Install nload, to keep an eye on the network in a bit more of a friendly way
-printf "\n${BOLD}Installing nload...${NF}\n"
-apt -y install nload 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    # Phase 1: Package selection
+    select_packages
 
-# Install tree, to dig through the mess
-printf "\n${BOLD}Installing tree...${NF}\n"
-apt -y install tree 1>> ~/setup.log
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    # Phase 2: System configuration
+    step_root_password
+    step_limited_user
+    step_recovery_user
+    step_ssh_keys
+    step_hostname
+    step_timezone
 
-# symlink tmux.conf from .dotfiles to ~
-printf "\n${BOLD}Linking your tmux.conf file...${NF}"
-ln -s /home/$LimitedUserName/.dotfiles/tmux.conf /home/$LimitedUserName/.tmux.conf
-printf "${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    # Phase 3: Update system
+    step_update
 
-# Installing tmux
-printf "\n${BOLD}Installing tmux...${NF}\n"
-apt -y install tmux
-printf "\n${BOLD}${WHITE}Done.${NF}\n"
-sleep 1
+    # Phase 4: Install selected packages
+    step_install_essentials
+    step_dotfiles
+    step_install_fish
+    step_install_remote
+    step_install_monitoring
+    step_install_dev
 
-# Install docker. Pulls install script from GitHub, appends commands to add
-# user to docker group, then runs.
-printf "\n${BOLD}Finally we'll install docker...${NF}\n"
-printf "${BOLD}Pulling install script from GitHub...${NF}\n"
-curl -fsSL https://raw.githubusercontent.com/jaydenk/Scripts/Multiple_OSes/NewServerSetup/Ubuntu/installDockerUbuntu.sh -o installDockerUbuntu.sh
-chmod u+x installDockerUbuntu.sh
-printf "# Add $LimitedUserName to docker group to avoid needing sudo\nprintf \"\\n${BOLD}Adding $LimitedUserName to docker group...${NF}\"\nusermod -aG docker $LimitedUserName\nprintf \"${BOLD}${WHITE}Done.${NF}\\n\"\n\n# Hand control back to setup.sh\nprintf \"\\n${BOLD}Handing control back to setup.sh...${NF}\\n\"" >> installDockerCentOS.sh
-chmod u+x installDockerUbuntu.sh
-/bin/bash ./installDockerUbuntu.sh
-sleep 1
+    # Phase 5: Docker & Tailscale
+    step_install_docker
+    step_install_tailscale
 
-# And that's it!
-printf "\n${BOLD}${WHITE}Done! Enjoy your machine.\n\n${NF}"
+    # Phase 6: Security hardening (after all installs so firewall rules account for selections)
+    step_install_security
+    step_ssh_hardening
+
+    # Done
+    print_summary
+}
+
+main "$@"
